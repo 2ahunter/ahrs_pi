@@ -53,9 +53,9 @@ void v_v_add(float v1[MSZ], float v2[MSZ], float v_out[MSZ]);
 void v_v_sub(float v1[MSZ], float v2[MSZ], float v_out[MSZ]);
 void v_copy(float m_in[MSZ], float m_out[MSZ]);
 void m_v_mult(float m[MSZ][MSZ], float v[MSZ], float v_out[MSZ]);
-void ahrs_update(float q_minus[QSZ], float q_plus[QSZ], float bias_minus[MSZ],
-        float bias_plus[MSZ], float gyros[MSZ], float mags[MSZ], float accels[MSZ],
-        float mag_i[MSZ], float acc_i[MSZ], float dt);
+void ahrs_update(float q_minus[QSZ], float bias_minus[MSZ], float gyros[MSZ], float mags[MSZ], float accels[MSZ],
+    float mag_i[MSZ], float acc_i[MSZ], float dt, float kp_a, float ki_a, float kp_m, float ki_m, 
+    float q_plus[QSZ], float bias_plus[MSZ]);
 
 /*******************************************************************************
  * FUNCTIONS                                                                   *
@@ -147,6 +147,15 @@ float q_norm(float q[QSZ]) {
 }
 
 /**
+ * @function m_norm()
+ * @param M A matrix
+ * @return The magnitude of the M, m_norm
+ */
+double m_norm(float M[MSZ]){
+    return ((float) sqrt(M[0] * M[0] + M[1] * M[1] + M[2] * M[2]));
+}
+
+/**
  * @function v_scale()
  * Scales vector
  * @param s Scalar to scale vector with
@@ -216,13 +225,9 @@ void m_v_mult(float m[MSZ][MSZ], float v[MSZ], float v_out[MSZ]) {
     }
 }
 
-void ahrs_update(float q_minus[QSZ], float q_plus[QSZ], float bias_minus[MSZ],
-    float bias_plus[MSZ], float gyros[MSZ], float mags[MSZ], float accels[MSZ],
-    float mag_i[MSZ], float acc_i[MSZ], float dt) {
-    float kp_a = 2.5; //accelerometer proportional gain
-    float ki_a = 0.05; // accelerometer integral gain
-    float kp_m = 2.5; // magnetometer proportional gain
-    float ki_m = 0.05; //magnetometer integral gain
+void ahrs_update(float q_minus[QSZ], float bias_minus[MSZ], float gyros[MSZ], float mags[MSZ], float accels[MSZ],
+    float mag_i[MSZ], float acc_i[MSZ], float dt, float kp_a, float ki_a, float kp_m, float ki_m, 
+    float q_plus[QSZ], float bias_plus[MSZ]) {
 
     float acc_b[MSZ]; //estimated gravity vector in body frame
     float mag_b[MSZ]; //estimated magnetic field vector in body frame
@@ -238,7 +243,19 @@ void ahrs_update(float q_minus[QSZ], float q_plus[QSZ], float bias_minus[MSZ],
     float q_dot[QSZ]; // quaternion derivative
     float b_dot[MSZ]; // bias vector derivative
     float q_n;
+    float acc_n;
+    float mag_n;
 
+    /* normalize inertial measuremts */
+    acc_n = m_norm(accels);
+    accels[0] = accels[0]/acc_n;
+    accels[1] = accels[1]/acc_n;
+    accels[2] = accels[2]/acc_n;
+
+    mag_n = m_norm(mags);
+    mags[0] = mags[0]/mag_n;
+    mags[1] = mags[1]/mag_n;
+    mags[2] = mags[2]/mag_n;
 
     /*Accelerometer attitude calculations */
     q_rot_v_q(acc_i, q_minus, acc_b); //estimate gravity vector in body frame 
@@ -305,6 +322,11 @@ int main(void) {
     long int period = 20000000; // period in nsec
     long int timeout = 30 + 1; // timeout in sec
     char timer_active = 1;
+
+    float kp_a = 2.5; //accelerometer proportional gain
+    float ki_a = 0.05; // accelerometer integral gain
+    float kp_m = 2.5; // magnetometer proportional gain
+    float ki_m = 0.05; //magnetometer integral gain
 
     /* Matrix and Quaternion arrays */
     const float dt = DT; // integration interval
@@ -408,8 +430,8 @@ int main(void) {
 
             // clock_gettime(CLOCK_REALTIME,&update_start);
             clock_gettime(CLOCK_MONOTONIC, &update_start);
-            ahrs_update(q_minus, q_plus, b_minus, b_plus, gyro_cal, mag_cal, acc_cal, m_i, a_i, dt);
-            clock_gettime(CLOCK_MONOTONIC, &update_end);
+            ahrs_update(q_minus, b_minus, gyro_cal, mag_cal, acc_cal, m_i,
+                    a_i, dt, kp_a, ki_a, kp_m, ki_m, q_plus, b_plus);            clock_gettime(CLOCK_MONOTONIC, &update_end);
             // clock_gettime(CLOCK_REALTIME, &update_end);
             quat2euler(q_plus, euler); // convert quaternion to euler angles
             /* update b_minus and q_minus */

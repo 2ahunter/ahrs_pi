@@ -48,14 +48,15 @@ void q_mult(double q[QSZ], double p[QSZ], double r[QSZ]);
 void quat2euler(double q[QSZ], double euler[MSZ]) ;
 void q_rot_v_q(double v_i[MSZ], double q[QSZ], double v_b[MSZ]);
 double q_norm(double q[QSZ]);
+double m_norm(double m[MSZ]);
 void v_scale(double s, double v[MSZ]);
 void v_v_add(double v1[MSZ], double v2[MSZ], double v_out[MSZ]);
 void v_v_sub(double v1[MSZ], double v2[MSZ], double v_out[MSZ]);
 void v_copy(double m_in[MSZ], double m_out[MSZ]);
 void m_v_mult(double m[MSZ][MSZ], double v[MSZ], double v_out[MSZ]);
-void ahrs_update(double q_minus[QSZ], double q_plus[QSZ], double bias_minus[MSZ],
-        double bias_plus[MSZ], double gyros[MSZ], double mags[MSZ], double accels[MSZ],
-        double mag_i[MSZ], double acc_i[MSZ], double dt);
+void ahrs_update(double q_minus[QSZ], double bias_minus[MSZ], double gyros[MSZ], double mags[MSZ], double accels[MSZ],
+    double mag_i[MSZ], double acc_i[MSZ], double dt, double kp_a, double ki_a, double kp_m, double ki_m, 
+    double q_plus[QSZ], double bias_plus[MSZ]);
 
 /*******************************************************************************
  * FUNCTIONS                                                                   *
@@ -147,6 +148,15 @@ double q_norm(double q[QSZ]) {
 }
 
 /**
+ * @function m_norm()
+ * @param M A matrix
+ * @return The magnitude of the M, m_norm
+ */
+double m_norm(double M[MSZ]){
+    return ((double) sqrt(M[0] * M[0] + M[1] * M[1] + M[2] * M[2]));
+}
+
+/**
  * @function v_scale()
  * Scales vector
  * @param s Scalar to scale vector with
@@ -216,13 +226,9 @@ void m_v_mult(double m[MSZ][MSZ], double v[MSZ], double v_out[MSZ]) {
     }
 }
 
-void ahrs_update(double q_minus[QSZ], double q_plus[QSZ], double bias_minus[MSZ],
-    double bias_plus[MSZ], double gyros[MSZ], double mags[MSZ], double accels[MSZ],
-    double mag_i[MSZ], double acc_i[MSZ], double dt) {
-    double kp_a = 2.5; //accelerometer proportional gain
-    double ki_a = 0.05; // accelerometer integral gain
-    double kp_m = 2.5; // magnetometer proportional gain
-    double ki_m = 0.05; //magnetometer integral gain
+void ahrs_update(double q_minus[QSZ], double bias_minus[MSZ], double gyros[MSZ], double mags[MSZ], double accels[MSZ],
+    double mag_i[MSZ], double acc_i[MSZ], double dt, double kp_a, double ki_a, double kp_m, double ki_m, 
+    double q_plus[QSZ], double bias_plus[MSZ]) {
 
     double acc_b[MSZ]; //estimated gravity vector in body frame
     double mag_b[MSZ]; //estimated magnetic field vector in body frame
@@ -238,7 +244,19 @@ void ahrs_update(double q_minus[QSZ], double q_plus[QSZ], double bias_minus[MSZ]
     double q_dot[QSZ]; // quaternion derivative
     double b_dot[MSZ]; // bias vector derivative
     double q_n;
+    double acc_n;
+    double mag_n;
 
+    /* normalize inertial measuremts */
+    acc_n = m_norm(accels);
+    accels[0] = accels[0]/acc_n;
+    accels[1] = accels[1]/acc_n;
+    accels[2] = accels[2]/acc_n;
+
+    mag_n = m_norm(mags);
+    mags[0] = mags[0]/mag_n;
+    mags[1] = mags[1]/mag_n;
+    mags[2] = mags[2]/mag_n;
 
     /*Accelerometer attitude calculations */
     q_rot_v_q(acc_i, q_minus, acc_b); //estimate gravity vector in body frame 
@@ -306,11 +324,18 @@ int main(void) {
     long int timeout = 30 + 1; // timeout in sec
     char timer_active = 1;
 
-    /* Matrix and Quaternion arrays */
+    /*filter gains */
+    double kp_a = 2.5; //accelerometer proportional gain
+    double ki_a = 0.05; // accelerometer integral gain
+    double kp_m = 2.5; // magnetometer proportional gain
+    double ki_m = 0.05; //magnetometer integral gain
+
+    /* timing and conversions */
     const double dt = DT; // integration interval
     const double gyro_scale = 250.0 / (double) ((1 << 15) - 1);
     const double deg2rad = M_PI / 180.0;
     const double rad2deg = 180.0 / M_PI;
+
     /*Calibration matrices and offsets from tumble test */
     double A_acc[MSZ][MSZ] = {
         {0.00100495454726146, -0.0000216880122750632, 0.0000133999325710038},
@@ -400,14 +425,18 @@ int main(void) {
                 mag_raw_double[index] = (double)mag_raw[index];
                 gyro_cal[index] = (double) gyro_raw[index] * gyro_scale * deg2rad; // scale and convert gyro data into rad/s
             }
-            /* calibrate sensors */
+            // printf("%+3.1f, %3.1f, %3.1f, ", acc_raw_double[0], acc_raw_double[1], acc_raw_double[2]);
+            // printf("%1.3e, %1.3e, %1.3e, ", mag_raw_double[0], mag_raw_double[1], mag_raw_double[2]);
+            // printf("%1.3e, %1.3e, %1.3e, ", gyro_cal[0], gyro_cal[1], gyro_cal[2]);
+            // /* calibrate sensors */
             m_v_mult(A_acc, acc_raw_double, acc_tmp); // scale and calibrate acc             
             v_v_add(acc_tmp, b_acc, acc_cal); // offset accelerometer data              
             m_v_mult(A_mag, mag_raw_double, mag_tmp); // scale magnetometer data                 
             v_v_add(mag_tmp, b_mag, mag_cal); // offset magnetometer data
 
             clock_gettime(CLOCK_REALTIME,&update_start);
-            ahrs_update(q_minus, q_plus, b_minus, b_plus, gyro_cal, mag_cal, acc_cal, m_i, a_i, dt);
+            ahrs_update(q_minus, b_minus, gyro_cal, mag_cal, acc_cal, m_i,
+                    a_i, dt, kp_a, ki_a, kp_m, ki_m, q_plus, b_plus);
             clock_gettime(CLOCK_REALTIME, &update_end);
             quat2euler(q_plus, euler); // convert quaternion to euler angles
             /* update b_minus and q_minus */

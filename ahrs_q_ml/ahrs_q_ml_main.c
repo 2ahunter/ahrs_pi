@@ -14,7 +14,8 @@
 #include <pigpio.h> // i2c library
 #include <time.h> // has nanosleep() function and clock_gettime()
 #include <unistd.h> // has usleep() function
-#include "../IMU/BNO055.h" // The header file for this source file. 
+#include "../IMU/BNO055.h" // The header file for the IMU. 
+#include "ahrs_q_update.h" // Update algorithm
 
 /*******************************************************************************
  * PRIVATE #DEFINES                                                            *
@@ -216,79 +217,6 @@ void m_v_mult(double m[MSZ][MSZ], double v[MSZ], double v_out[MSZ]) {
     }
 }
 
-void ahrs_update(double q_minus[QSZ], double q_plus[QSZ], double bias_minus[MSZ],
-    double bias_plus[MSZ], double gyros[MSZ], double mags[MSZ], double accels[MSZ],
-    double mag_i[MSZ], double acc_i[MSZ], double dt) {
-    double kp_a = 2.5; //accelerometer proportional gain
-    double ki_a = 0.05; // accelerometer integral gain
-    double kp_m = 2.5; // magnetometer proportional gain
-    double ki_m = 0.05; //magnetometer integral gain
-
-    double acc_b[MSZ]; //estimated gravity vector in body frame
-    double mag_b[MSZ]; //estimated magnetic field vector in body frame
-
-    double gyro_cal[MSZ]; // gyros with bias correction
-    double gyro_wfb[MSZ]; // gyro 'rate' after feedback
-    double w_meas_ap[MSZ]; // accelerometer proportion correction rate
-    double w_meas_mp[MSZ]; // magnetometer proportional correction rate
-    double w_meas_ai[MSZ]; // accelerometer integral correction rate
-    double w_meas_mi[MSZ]; // magnetometer integral correction rate
-
-    double gyro_q_wfb[QSZ]; // temporary quaternion to hold feedback term
-    double q_dot[QSZ]; // quaternion derivative
-    double b_dot[MSZ]; // bias vector derivative
-    double q_n;
-
-
-    /*Accelerometer attitude calculations */
-    q_rot_v_q(acc_i, q_minus, acc_b); //estimate gravity vector in body frame 
-    cross(accels, acc_b, w_meas_ap); // calculate the accelerometer rate term
-    v_copy(w_meas_ap, w_meas_ai); // make a copy for the integral term
-    v_scale(kp_a, w_meas_ap); // calculate the accelerometer proportional feedback term 
-    v_scale(ki_a, w_meas_ai); // calculate the accelerometer integral feedback term 
-
-    /*Magnetometer attitude calculations*/
-    q_rot_v_q(mag_i, q_minus, mag_b); //estimate magnetic field vector in body frame
-    cross(mags, mag_b, w_meas_mp); // calculate the magnetometer rate term
-    v_copy(w_meas_mp, w_meas_mi); //make a copy for the integral term
-    v_scale(kp_m, w_meas_mp); // calculate the magnetometer proportional feedback term
-    v_scale(ki_m, w_meas_mi); // calculate the magnetometer integral feedback term
-
-    /*Gyro attitude contributions */
-    v_v_sub(gyros, bias_minus, gyro_cal); //correct the gyros with the b_minus vector
-
-    /* calculate total rate term gyro_wfb */
-    v_v_add(w_meas_ap, w_meas_mp, gyro_wfb);
-    v_v_add(gyro_cal, gyro_wfb, gyro_wfb);
-
-    /* convert feedback term to a pure quaternion */
-    gyro_q_wfb[0] = 0;
-    gyro_q_wfb[1] = gyro_wfb[0];
-    gyro_q_wfb[2] = gyro_wfb[1];
-    gyro_q_wfb[3] = gyro_wfb[2];
-
-    /* compute the quaternion derivative q_dot */
-    q_mult(q_minus, gyro_q_wfb, q_dot);
-
-    /* integrate term by term */
-    q_plus[0] = q_minus[0] + 0.5 * q_dot[0] * dt;
-    q_plus[1] = q_minus[1] + 0.5 * q_dot[1] * dt;
-    q_plus[2] = q_minus[2] + 0.5 * q_dot[2] * dt;
-    q_plus[3] = q_minus[3] + 0.5 * q_dot[3] * dt;
-
-    // normalize the quaternion for stability
-    q_n = q_norm(q_plus);
-    q_plus[0] = q_plus[0] / q_n;
-    q_plus[1] = q_plus[1] / q_n;
-    q_plus[2] = q_plus[2] / q_n;
-    q_plus[3] = q_plus[3] / q_n;
-
-    // compute the integral of the bias term by term
-    bias_plus[0] = bias_minus[0] - (w_meas_ai[0] + w_meas_mi[0]) * dt;
-    bias_plus[1] = bias_minus[1] - (w_meas_ai[1] + w_meas_mi[1]) * dt;
-    bias_plus[2] = bias_minus[2] - (w_meas_ai[2] + w_meas_mi[2]) * dt;
-}
-
 int main(void) {
     int i2c_handle;
     char init_result;
@@ -407,6 +335,9 @@ int main(void) {
                 mag_raw_double[index] = (double)mag_raw[index];
                 gyro_cal[index] = (double) gyro_raw[index] * gyro_scale * deg2rad; // scale and convert gyro data into rad/s
             }
+            // printf("%+3.1f, %3.1f, %3.1f, ", acc_raw_double[0], acc_raw_double[1], acc_raw_double[2]);
+            // printf("%1.3e, %1.3e, %1.3e, ", mag_raw_double[0], mag_raw_double[1], mag_raw_double[2]);
+            // printf("%1.3e, %1.3e, %1.3e, ", gyro_cal[0], gyro_cal[1], gyro_cal[2]);
             /* calibrate sensors */
             m_v_mult(A_acc, acc_raw_double, acc_tmp); // scale and calibrate acc             
             v_v_add(acc_tmp, b_acc, acc_cal); // offset accelerometer data              
